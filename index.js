@@ -118,27 +118,19 @@ function SonicBoom (opts) {
   this.retryEAGAIN = retryEAGAIN || (() => true)
   this.mkdir = mkdir || false
 
-  let fsWriteSync
-  let fsWrite
   if (contentMode === kContentModeBuffer) {
-    this._writingBuf = kEmptyBuffer
     this.write = writeBuffer
-    this.flush = flushBuffer
-    this.flushSync = flushBufferSync
-    this._actualWrite = actualWriteBuffer
-    fsWriteSync = () => fs.writeSync(this.fd, this._writingBuf)
-    fsWrite = () => fs.write(this.fd, this._writingBuf, this.release)
   } else if (contentMode === undefined || contentMode === kContentModeUtf8) {
-    this._writingBuf = ''
     this.write = write
-    this.flush = flush
-    this.flushSync = flushSync
-    this._actualWrite = actualWrite
-    fsWriteSync = () => fs.writeSync(this.fd, this._writingBuf, 'utf8')
-    fsWrite = () => fs.write(this.fd, this._writingBuf, 'utf8', this.release)
   } else {
     throw new Error(`SonicBoom supports "${kContentModeUtf8}" and "${kContentModeBuffer}", but passed ${contentMode}`)
   }
+  this._writingBuf = kEmptyBuffer
+  this.flush = flushBuffer
+  this.flushSync = flushBufferSync
+  this._actualWrite = actualWriteBuffer
+  const fsWriteSync = () => fs.writeSync(this.fd, this._writingBuf)
+  const fsWrite = () => fs.write(this.fd, this._writingBuf, this.release)
 
   if (typeof fd === 'number') {
     this.fd = fd
@@ -181,19 +173,7 @@ function SonicBoom (opts) {
     this.emit('write', n)
 
     this._len -= n
-    // In case of multi-byte characters, the length of the written buffer
-    // may be different from the length of the string. Let's make sure
-    // we do not have an accumulated string with a negative length.
-    // This also mean that ._len is not precise, but it's not a problem as some
-    // writes might be triggered earlier than ._minLength.
-    if (this._len < 0) {
-      this._len = 0
-    }
-
-    // TODO if we have a multi-byte character in the buffer, we need to
-    // n might not be the same as this._writingBuf.length, so we might loose
-    // characters here. The solution to this problem is to use a Buffer for _writingBuf.
-    this._writingBuf = this._writingBuf.slice(n)
+    this._writingBuf = this._writingBuf.subarray(n)
 
     if (this._writingBuf.length) {
       if (!this.sync) {
@@ -205,7 +185,7 @@ function SonicBoom (opts) {
         do {
           const n = fsWriteSync()
           this._len -= n
-          this._writingBuf = this._writingBuf.slice(n)
+          this._writingBuf = this._writingBuf.subarray(n)
         } while (this._writingBuf.length)
       } catch (err) {
         this.release(err)
@@ -273,34 +253,8 @@ function mergeBuf (bufs, len) {
 }
 
 function write (data) {
-  if (this.destroyed) {
-    throw new Error('SonicBoom destroyed')
-  }
-
-  const len = this._len + data.length
-  const bufs = this._bufs
-
-  if (this.maxLength && len > this.maxLength) {
-    this.emit('drop', data)
-    return this._len < this._hwm
-  }
-
-  if (
-    bufs.length === 0 ||
-    bufs[bufs.length - 1].length + data.length > this.maxWrite
-  ) {
-    bufs.push('' + data)
-  } else {
-    bufs[bufs.length - 1] += data
-  }
-
-  this._len = len
-
-  if (!this._writing && this._len >= this.minLength) {
-    this._actualWrite()
-  }
-
-  return this._len < this._hwm
+  data = Buffer.from(data)
+  return writeBuffer.call(this, data)
 }
 
 function writeBuffer (data) {
@@ -360,41 +314,6 @@ function callFlushCallbackOnDrain (cb) {
 
   this.once('drain', onDrain)
   this.once('error', onError)
-}
-
-function flush (cb) {
-  if (cb != null && typeof cb !== 'function') {
-    throw new Error('flush cb must be a function')
-  }
-
-  if (this.destroyed) {
-    const error = new Error('SonicBoom destroyed')
-    if (cb) {
-      cb(error)
-      return
-    }
-
-    throw error
-  }
-
-  if (this.minLength <= 0) {
-    cb?.()
-    return
-  }
-
-  if (cb) {
-    callFlushCallbackOnDrain.call(this, cb)
-  }
-
-  if (this._writing) {
-    return
-  }
-
-  if (this._bufs.length === 0) {
-    this._bufs.push('')
-  }
-
-  this._actualWrite()
 }
 
 function flushBuffer (cb) {
@@ -502,49 +421,6 @@ SonicBoom.prototype.end = function () {
   }
 }
 
-function flushSync () {
-  if (this.destroyed) {
-    throw new Error('SonicBoom destroyed')
-  }
-
-  if (this.fd < 0) {
-    throw new Error('sonic boom is not ready yet')
-  }
-
-  if (!this._writing && this._writingBuf.length > 0) {
-    this._bufs.unshift(this._writingBuf)
-    this._writingBuf = ''
-  }
-
-  let buf = ''
-  while (this._bufs.length || buf) {
-    if (buf.length <= 0) {
-      buf = this._bufs[0]
-    }
-    try {
-      const n = fs.writeSync(this.fd, buf, 'utf8')
-      buf = buf.slice(n)
-      this._len = Math.max(this._len - n, 0)
-      if (buf.length <= 0) {
-        this._bufs.shift()
-      }
-    } catch (err) {
-      const shouldRetry = err.code === 'EAGAIN' || err.code === 'EBUSY'
-      if (shouldRetry && !this.retryEAGAIN(err, buf.length, this._len - buf.length)) {
-        throw err
-      }
-
-      sleep(BUSY_WRITE_TIMEOUT)
-    }
-  }
-
-  try {
-    fs.fsyncSync(this.fd)
-  } catch {
-    // Skip the error. The fd might not support fsync.
-  }
-}
-
 function flushBufferSync () {
   if (this.destroyed) {
     throw new Error('SonicBoom destroyed')
@@ -588,23 +464,6 @@ SonicBoom.prototype.destroy = function () {
     return
   }
   actualClose(this)
-}
-
-function actualWrite () {
-  const release = this.release
-  this._writing = true
-  this._writingBuf = this._writingBuf || this._bufs.shift() || ''
-
-  if (this.sync) {
-    try {
-      const written = fs.writeSync(this.fd, this._writingBuf, 'utf8')
-      release(null, written)
-    } catch (err) {
-      release(err)
-    }
-  } else {
-    fs.write(this.fd, this._writingBuf, 'utf8', release)
-  }
 }
 
 function actualWriteBuffer () {

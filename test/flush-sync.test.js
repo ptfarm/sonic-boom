@@ -80,7 +80,7 @@ test('retry in flushSync on EAGAIN', (t) => {
 })
 
 test('throw error in flushSync on EAGAIN', (t) => {
-  t.plan(12)
+  t.plan(11)
 
   const fakeFs = Object.create(fs)
   const SonicBoom = proxyquire('../', {
