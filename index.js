@@ -151,9 +151,9 @@ function SonicBoom (opts) {
       return
     }
     this.emit('write', n)
-
-    this._len -= n
-    this._writingBuf = this._writingBuf.slice(n)
+    const releasedBufObj = releaseWritingBuf(this._writingBuf, this._len, n)
+    this._len = releasedBufObj.len
+    this._writingBuf = releasedBufObj.writingBuf
 
     if (this._writingBuf.length) {
       if (!this.sync) {
@@ -164,9 +164,10 @@ function SonicBoom (opts) {
       try {
         do {
           const n = fs.writeSync(this.fd, this._writingBuf, 'utf8')
-          this._len -= n
-          this._writingBuf = this._writingBuf.slice(n)
-        } while (this._writingBuf)
+          const releasedBufObj = releaseWritingBuf(this._writingBuf, this._len, n)
+          this._len = releasedBufObj.len
+          this._writingBuf = releasedBufObj.writingBuf
+        } while (this._writingBuf.length)
       } catch (err) {
         this.release(err)
         return
@@ -205,6 +206,17 @@ function SonicBoom (opts) {
       this._asyncDrainScheduled = false
     }
   })
+}
+function releaseWritingBuf (writingBuf, len, n) {
+  // if writingBuf.length is equal to n, that means writingBuf contains no multi-byte character
+  if (typeof writingBuf === 'string' && writingBuf.length !== n) {
+    // Since the fs.write callback parameter `n` means how many bytes the passed of string
+    // We calculate the original string length for avoiding the multi-byte character issue
+    n = Buffer.from(writingBuf, 'utf8').subarray(0, n).toString('utf8').length
+  }
+  len = Math.max(len - n, 0)
+  writingBuf = writingBuf.slice(n)
+  return { writingBuf, len }
 }
 
 function emitDrain (sonic) {
@@ -347,10 +359,15 @@ SonicBoom.prototype.flushSync = function () {
   }
 
   while (this._bufs.length) {
-    const buf = this._bufs[0]
+    let buf = this._bufs[0]
     try {
-      this._len -= fs.writeSync(this.fd, buf, 'utf8')
-      this._bufs.shift()
+      const n = fs.writeSync(this.fd, buf, 'utf8')
+      const releasedBufObj = releaseWritingBuf(buf, this._len, n)
+      buf = releasedBufObj.writingBuf
+      this._len = releasedBufObj.len
+      if (buf.length <= 0) {
+        this._bufs.shift()
+      }
     } catch (err) {
       if (err.code !== 'EAGAIN' || !this.retryEAGAIN(err, buf.length, this._len - buf.length)) {
         throw err

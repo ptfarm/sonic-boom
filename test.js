@@ -114,7 +114,7 @@ function buildTests (test, sync) {
     const dest = file()
     const fd = fs.openSync(dest, 'w')
     const stream = new SonicBoom({ fd, sync })
-    const source = fs.createReadStream(__filename)
+    const source = fs.createReadStream(__filename, { encoding: 'utf8' })
 
     source.pipe(stream)
 
