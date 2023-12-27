@@ -29,7 +29,7 @@ function buildTests (test, sync) {
     const fd = fs.openSync(dest, 'w')
     const stream = new SonicBoom({ fd, minLength: 0, sync, maxWrite: MAX_WRITE })
     let buf = Buffer.alloc(MAX_WRITE).fill('x')
-    buf = buf.toString() + '🌲'
+    buf = '🌲' + buf.toString()
     stream.write(buf)
     stream.end()
 
