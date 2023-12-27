@@ -8,8 +8,7 @@
   "scripts": {
     "test": "npm run test:types && standard && tap test.js",
     "test:unit": "tap test.js",
-    "test:types": "tsc && tsd && ts-node types/tests/test.ts",
-    "prepare": "husky install"
+    "test:types": "tsc && tsd && ts-node types/tests/test.ts"
   },
   "repository": {
     "type": "git",
