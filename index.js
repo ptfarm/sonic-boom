@@ -240,7 +240,7 @@ function SonicBoom (opts) {
   })
 }
 function releaseWritingBuf (writingBuf, len, n) {
-  if (writingBuf instanceof String) {
+  if (typeof writingBuf === 'string') {
     // Since the fs.write callback parameter `n` means how many bytes the passed of string
     // We calculate the original string length for avoiding the multi-byte character issue
     n = Buffer.from(writingBuf).subarray(0, n).toString().length
