@@ -366,8 +366,11 @@ SonicBoom.prototype.flushSync = function () {
     this._writingBuf = ''
   }
 
-  while (this._bufs.length) {
-    let buf = this._bufs[0]
+  let buf = ''
+  while (this._bufs.length || buf.length) {
+    if (buf.length <= 0) {
+      buf = this._bufs[0]
+    }
     try {
       const n = fs.writeSync(this.fd, buf, 'utf8')
       const releasedBufObj = releaseWritingBuf(buf, this._len, n)
