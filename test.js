@@ -1588,3 +1588,61 @@ test('make sure `maxWrite` is passed', (t) => {
   const stream = new SonicBoom({ dest, maxLength: 65536 })
   t.equal(stream.maxLength, 65536)
 })
+
+test('write buffers that are not totally written with flush sync', (t) => {
+  t.plan(8)
+
+  const fakeFs = Object.create(fs)
+  let cachedBuf = ''
+  fakeFs.writeSync = function (fd, buf, enc) {
+    t.pass('fake fs.write called')
+    cachedBuf = buf
+    // only write one letter
+    fs.writeSync(fd, buf.slice(0, 1), enc)
+    fakeFs.writeSync = function (fd, buf, enc) {
+      t.pass('fake fs.write called')
+      if (cachedBuf === buf) {
+        t.fail('throwing to avoid infinite loop')
+        throw Error('Buffer did not flush when if not writing whole buffer')
+      }
+      fakeFs.writeSync = fs.writeSync
+      return 0
+    }
+    return 1
+  }
+  const SonicBoom = proxyquire('.', {
+    fs: fakeFs
+  })
+
+  const dest = file()
+  const fd = fs.openSync(dest, 'w')
+  const stream = new SonicBoom({ fd, minLength: 100, sync: false })
+
+  stream.on('ready', () => {
+    t.pass('ready emitted')
+  })
+
+  t.ok(stream.write('hello world\n'))
+  t.ok(stream.write('something else\n'))
+
+  stream.flushSync()
+
+  stream.on('write', (n) => {
+    if (n === 0) {
+      t.fail('throwing to avoid infinite loop')
+      throw Error('shouldn\'t call write handler after flushing with n === 0')
+    }
+  })
+
+  stream.end()
+
+  stream.on('finish', () => {
+    fs.readFile(dest, 'utf8', (err, data) => {
+      t.error(err)
+      t.equal(data, 'hello world\nsomething else\n')
+    })
+  })
+  stream.on('close', () => {
+    t.pass('close emitted')
+  })
+})
